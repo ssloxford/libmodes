@@ -12,6 +12,30 @@ This project is a refactoring of the popular
 Sanfilippo. It modularizes the code into separate functions and removes
 all non-essentials, so that only the decoding logic is left.
 
+## Updates (Richard Baker)
+
+Additional refactoring has been added to allow greater access to the intermediate detection and demodulation results. All 
+functionality is backwards compatible with the original libmodes, but additional functionality is available:
+```
+	//structure capturing the results of processing a message, indicating how far the detection/demod got
+	struct mode_s_detect_result {
+		int preamble_found;
+		int phase_corrected;
+		int demod_error_count;
+		int delta_test_result;
+		int good_message;
+		int msgtype;
+		int msglen;
+		struct mode_s_msg mm;
+	};
+	
+	//one iteration of the internal loop in mode_s_detect, returning a detection result for that offset j
+	mode_s_detect_oneoffset(mode_s_t *self, struct mode_s_detect_result *result, uint16_t *mag, uint32_t maglen, uint32_t j)
+	
+```
+
+The internal code has also been separated into multiple function calls to make control flow clearer.
+
 ## Usage
 
 ```c
