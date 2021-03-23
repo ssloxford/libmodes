@@ -556,10 +556,120 @@ void apply_phase_correction(uint16_t *mag) {
   }
 }
 
+int mode_s_detect_preamble(uint16_t *mag, int j, int high) {
+	// First check of relations between the first 10 samples representing a
+    // valid preamble. We don't even investigate further if this simple
+    // test is not passed.
+    if (!(mag[j] > mag[j+1] &&
+        mag[j+1] < mag[j+2] &&
+        mag[j+2] > mag[j+3] &&
+        mag[j+3] < mag[j] &&
+        mag[j+4] < mag[j] &&
+        mag[j+5] < mag[j] &&
+        mag[j+6] < mag[j] &&
+        mag[j+7] > mag[j+8] &&
+        mag[j+8] < mag[j+9] &&
+        mag[j+9] > mag[j+6]))
+    {
+      return 0;
+    }
+
+    // The samples between the two spikes must be < than the average of the
+    // high spikes level. We don't test bits too near to the high levels as
+    // signals can be out of phase so part of the energy can be in the near
+    // samples.
+    high = (mag[j]+mag[j+2]+mag[j+7]+mag[j+9])/6;
+    if (mag[j+4] >= high ||
+        mag[j+5] >= high)
+    {
+      return 0;
+    }
+
+    // Similarly samples in the range 11-14 must be low, as it is the space
+    // between the preamble and real data. Again we don't test bits too
+    // near to high levels, see above.
+    if (mag[j+11] >= high ||
+        mag[j+12] >= high ||
+        mag[j+13] >= high ||
+        mag[j+14] >= high)
+    {
+      return 0;
+    }
+	
+	return 1;
+}
+
+int mode_s_detect_demod(uint16_t *mag, unsigned char *bits, int j, int low, int high) {
+	// Decode all the next 112 bits, regardless of the actual message size.
+    // We'll check the actual message type later.
+    int errors = 0;
+	int delta;
+	
+    for (int i = 0; i < MODE_S_LONG_MSG_BITS*2; i += 2) {
+      low = mag[j+i+MODE_S_PREAMBLE_US*2];
+      high = mag[j+i+MODE_S_PREAMBLE_US*2+1];
+      delta = low-high;
+      if (delta < 0) delta = -delta;
+
+      if (i > 0 && delta < 256) {
+        bits[i/2] = bits[i/2-1];
+      } else if (low == high) {
+        // Checking if two adiacent samples have the same magnitude is
+        // an effective way to detect if it's just random noise that
+        // was detected as a valid preamble.
+        bits[i/2] = 2; // error
+        if (i < MODE_S_SHORT_MSG_BITS*2) errors++;
+      } else if (low > high) {
+        bits[i/2] = 1;
+      } else {
+        // (low < high) for exclusion 
+        bits[i/2] = 0;
+      }
+    }
+	
+	return errors;
+}
+
+void mode_s_detect_pack(unsigned char *bits, unsigned char *msg) {
+	// Pack bits into bytes
+    for (int i = 0; i < MODE_S_LONG_MSG_BITS; i += 8) {
+      msg[i/8] =
+          bits[i]<<7 | 
+          bits[i+1]<<6 | 
+          bits[i+2]<<5 | 
+          bits[i+3]<<4 | 
+          bits[i+4]<<3 | 
+          bits[i+5]<<2 | 
+          bits[i+6]<<1 | 
+          bits[i+7];
+    }
+}
+
+int mode_s_detect_deltatest(uint16_t *mag, int msglen, int j) {
+	// Last check, high and low bits are different enough in magnitude to
+    // mark this as real message and not just noise?
+    int delta = 0;
+    for (int i = 0; i < msglen*8*2; i += 2) {
+      delta += abs(mag[j+i+MODE_S_PREAMBLE_US*2]-
+                   mag[j+i+MODE_S_PREAMBLE_US*2+1]);
+    }
+    delta /= msglen*4;
+
+    // Filter for an average delta of three is small enough to let almost
+    // every kind of message to pass, but high enough to filter some random
+    // noise.
+    if (delta < 10*255) {
+      return 0;
+    }
+	
+	return 1;
+}
+
+
 // Detect a Mode S messages inside the magnitude buffer pointed by 'mag' and of
 // size 'maglen' bytes. Every detected Mode S message is convert it into a
 // stream of bits and passed to the function to display it.
-void mode_s_detect(mode_s_t *self, uint16_t *mag, uint32_t maglen, mode_s_callback_t cb) {
+void mode_s_detectOLD(mode_s_t *self, uint16_t *mag, uint32_t maglen, mode_s_callback_t cb) {
   unsigned char bits[MODE_S_LONG_MSG_BITS];
   unsigned char msg[MODE_S_LONG_MSG_BITS/2];
   uint16_t aux[MODE_S_LONG_MSG_BITS*2];
@@ -589,51 +699,17 @@ void mode_s_detect(mode_s_t *self, uint16_t *mag, uint32_t maglen, mode_s_callba
   // 8   --
   // 9   -------------------
   for (j = 0; j < maglen - MODE_S_FULL_LEN*2; j++) {
-    int low, high, delta, i, errors;
+	int low = 0; int high = 0;
+    int delta, i, errors;
     int good_message = 0;
 
-    if (use_correction) goto good_preamble; // We already checked it.
+	if (!use_correction) {
+		int preamble = mode_s_detect_preamble(mag, j, high);
+		if (preamble == 0) {
+		  continue;
+		}
+	}
 
-    // First check of relations between the first 10 samples representing a
-    // valid preamble. We don't even investigate further if this simple
-    // test is not passed.
-    if (!(mag[j] > mag[j+1] &&
-        mag[j+1] < mag[j+2] &&
-        mag[j+2] > mag[j+3] &&
-        mag[j+3] < mag[j] &&
-        mag[j+4] < mag[j] &&
-        mag[j+5] < mag[j] &&
-        mag[j+6] < mag[j] &&
-        mag[j+7] > mag[j+8] &&
-        mag[j+8] < mag[j+9] &&
-        mag[j+9] > mag[j+6]))
-    {
-      continue;
-    }
-
-    // The samples between the two spikes must be < than the average of the
-    // high spikes level. We don't test bits too near to the high levels as
-    // signals can be out of phase so part of the energy can be in the near
-    // samples.
-    high = (mag[j]+mag[j+2]+mag[j+7]+mag[j+9])/6;
-    if (mag[j+4] >= high ||
-        mag[j+5] >= high)
-    {
-      continue;
-    }
-
-    // Similarly samples in the range 11-14 must be low, as it is the space
-    // between the preamble and real data. Again we don't test bits too
-    // near to high levels, see above.
-    if (mag[j+11] >= high ||
-        mag[j+12] >= high ||
-        mag[j+13] >= high ||
-        mag[j+14] >= high)
-    {
-      continue;
-    }
-
-good_preamble:
     // If the previous attempt with this message failed, retry using
     // magnitude correction.
     if (use_correction) {
@@ -641,70 +717,24 @@ good_preamble:
       if (j && detect_out_of_phase(mag+j)) {
         apply_phase_correction(mag+j);
       }
-      // TODO ... apply other kind of corrections.
     }
 
-    // Decode all the next 112 bits, regardless of the actual message size.
-    // We'll check the actual message type later.
-    errors = 0;
-    for (i = 0; i < MODE_S_LONG_MSG_BITS*2; i += 2) {
-      low = mag[j+i+MODE_S_PREAMBLE_US*2];
-      high = mag[j+i+MODE_S_PREAMBLE_US*2+1];
-      delta = low-high;
-      if (delta < 0) delta = -delta;
-
-      if (i > 0 && delta < 256) {
-        bits[i/2] = bits[i/2-1];
-      } else if (low == high) {
-        // Checking if two adiacent samples have the same magnitude is
-        // an effective way to detect if it's just random noise that
-        // was detected as a valid preamble.
-        bits[i/2] = 2; // error
-        if (i < MODE_S_SHORT_MSG_BITS*2) errors++;
-      } else if (low > high) {
-        bits[i/2] = 1;
-      } else {
-        // (low < high) for exclusion 
-        bits[i/2] = 0;
-      }
-    }
+    errors = mode_s_detect_demod(mag, bits, j, low, high);
 
     // Restore the original message if we used magnitude correction.
     if (use_correction)
       memcpy(mag+j+MODE_S_PREAMBLE_US*2, aux, sizeof(aux));
 
-    // Pack bits into bytes
-    for (i = 0; i < MODE_S_LONG_MSG_BITS; i += 8) {
-      msg[i/8] =
-          bits[i]<<7 | 
-          bits[i+1]<<6 | 
-          bits[i+2]<<5 | 
-          bits[i+3]<<4 | 
-          bits[i+4]<<3 | 
-          bits[i+5]<<2 | 
-          bits[i+6]<<1 | 
-          bits[i+7];
-    }
+    mode_s_detect_pack(bits, msg);
 
     int msgtype = msg[0]>>3;
     int msglen = mode_s_msg_len_by_type(msgtype)/8;
 
-    // Last check, high and low bits are different enough in magnitude to
-    // mark this as real message and not just noise?
-    delta = 0;
-    for (i = 0; i < msglen*8*2; i += 2) {
-      delta += abs(mag[j+i+MODE_S_PREAMBLE_US*2]-
-                   mag[j+i+MODE_S_PREAMBLE_US*2+1]);
-    }
-    delta /= msglen*4;
-
-    // Filter for an average delta of three is small enough to let almost
-    // every kind of message to pass, but high enough to filter some random
-    // noise.
-    if (delta < 10*255) {
-      use_correction = 0;
-      continue;
-    }
+    int delta_res = mode_s_detect_deltatest(mag, msglen, j);
+	if (delta_res == 0) {
+		use_correction = 0;
+		continue;
+	}
 
     // If we reached this point, and error is zero, we are very likely with
     // a Mode S message in our hands, but it may still be broken and CRC
@@ -737,4 +767,107 @@ good_preamble:
       use_correction = 0;
     }
   }
+}
+
+void mode_s_oneshotdetect(mode_s_t *self, struct mode_s_detect_result *result, uint16_t *mag, uint32_t maglen, uint32_t j) {
+	unsigned char bits[MODE_S_LONG_MSG_BITS];
+	unsigned char msg[MODE_S_LONG_MSG_BITS/2];
+	uint16_t aux[MODE_S_LONG_MSG_BITS*2];
+	
+	int low = 0; int high = 0;
+
+	
+	//try the whole thing without phase correction
+	result->preamble_found = mode_s_detect_preamble(mag, j, high);
+	if (result->preamble_found == 0) { return;	}
+
+    result->demod_error_count = mode_s_detect_demod(mag, bits, j, low, high);
+    mode_s_detect_pack(bits, msg);
+
+    result->msgtype = msg[0]>>3;
+    result->msglen = mode_s_msg_len_by_type(result->msgtype)/8;
+
+    result->delta_test_result = mode_s_detect_deltatest(mag, result->msglen, j);
+	if (result->delta_test_result == 0) { return; }
+
+    // If we reached this point, and error is zero, we are very likely with
+    // a Mode S message in our hands, but it may still be broken and CRC
+    // may not be correct. This is handled by the next layer.
+    if (result->demod_error_count == 0 || (self->aggressive && result->demod_error_count < 3)) {
+
+	  // Decode the received message
+      mode_s_decode(self, &(result->mm), msg);
+
+      // Skip this message if we are sure it's fine.
+      if (result->mm.crcok) {
+        result->good_message = 1;
+		result->phase_corrected = 0;
+        result->mm.phase_corrected = 0;
+		return;
+      }
+	}
+
+	//do the whole thing again but with phase correction
+	if (!result->good_message) {
+		
+		memcpy(aux, mag+j+MODE_S_PREAMBLE_US*2, sizeof(aux));
+		if (j && detect_out_of_phase(mag+j)) {
+			apply_phase_correction(mag+j);
+		}
+		
+		result->demod_error_count = mode_s_detect_demod(mag, bits, j, low, high);
+		
+		memcpy(mag+j+MODE_S_PREAMBLE_US*2, aux, sizeof(aux));
+		
+		mode_s_detect_pack(bits, msg);
+
+		result->msgtype = msg[0]>>3;
+		result->msglen = mode_s_msg_len_by_type(result->msgtype)/8;
+
+		result->delta_test_result = mode_s_detect_deltatest(mag, result->msglen, j);
+		if (result->delta_test_result == 0) { return; }
+		
+		// Attempt to decode and check CRC
+		if (result->demod_error_count == 0 || (self->aggressive && result->demod_error_count < 3)) {
+			//struct mode_s_msg mm;
+
+			// Decode the received message
+			mode_s_decode(self, &(result->mm), msg);
+
+			// Skip this message if we are sure it's fine.
+			if (result->mm.crcok) {
+				result->good_message = 1;
+				result->phase_corrected = 1;
+				result->mm.phase_corrected = 1;
+				return;
+			}
+		}
+		
+	}
+
+}
+
+void init_detect_result(struct mode_s_detect_result *res) {
+	res->preamble_found = 0;
+	res->phase_corrected = 0;
+	res->demod_error_count = 0;
+	res->delta_test_result = 0;
+	res->good_message = 0;
+	res->mm.crcok = 0;
+}
+
+void mode_s_detect(mode_s_t *self, uint16_t *mag, uint32_t maglen, mode_s_callback_t cb) {
+	//prepare the result
+	struct mode_s_detect_result res;
+	
+	uint32_t j;
+	for (j = 0; j < maglen - MODE_S_FULL_LEN*2; j++) {
+		init_detect_result(&res);
+		
+		mode_s_oneshotdetect(self, &res, mag, maglen, j);
+		if (res.demod_error_count == 0 && (self->check_crc == 0 || res.mm.crcok)) {
+			cb(self, &res.mm);
+			j += (MODE_S_PREAMBLE_US+(res.msglen*8))*2;
+		}
+	}
 }

@@ -69,6 +69,17 @@ struct mode_s_msg {
   int altitude, unit;
 };
 
+struct mode_s_detect_result {
+  int preamble_found;
+  int phase_corrected;
+  int demod_error_count;
+  int delta_test_result;
+  int good_message;
+  int msgtype;
+  int msglen;
+  struct mode_s_msg mm;
+};
+
 typedef void (*mode_s_callback_t)(mode_s_t *self, struct mode_s_msg *mm);
 
 void mode_s_init(mode_s_t *self);
