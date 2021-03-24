@@ -5,8 +5,13 @@
 #include "mode-s.h"
 %}
 
-void mode_s_init(mode_s_t *self);
-void mode_s_compute_magnitude_vector(unsigned char *data, uint16_t *mag, uint32_t size);
-void mode_s_detect(mode_s_t *self, uint16_t *mag, uint32_t maglen, mode_s_callback_t);
-void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg);
-void mode_s_detect_oneoffset(mode_s_t *self, struct mode_s_detect_result *result, uint16_t *mag, uint32_t maglen, uint32_t j);
+%include "numpy.i"
+%init %{
+import_array();
+%}
+
+//%apply (uint16_t* IN_ARRAY1, uint32_t DIM1) {(int* seq, int n)};
+//%apply (unsigned char* IN_ARRAY1, uint32_t DIM1) {(unsigned char* data, uint32_t data_len)};
+%apply (unsigned char* IN_ARRAY1, int DIM1) {(unsigned char* data, int data_len)};
+
+%include "mode-s.h"
