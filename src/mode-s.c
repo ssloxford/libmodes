@@ -1,5 +1,7 @@
 #include "mode-s.h"
 
+#include <stdio.h>
+
 #define MODE_S_PREAMBLE_US 8       // microseconds
 #define MODE_S_LONG_MSG_BITS 112
 #define MODE_S_SHORT_MSG_BITS 56
@@ -696,6 +698,8 @@ void mode_s_detect_oneoffset(mode_s_t *self, struct mode_s_detect_result *result
 	
 	int low = 0; int high = 0;
 
+	//always set the offset
+	result->offset = j;
 	
 	//try the whole thing without phase correction
 	result->preamble_found = mode_s_detect_preamble(mag, j, high);
@@ -774,6 +778,8 @@ void init_detect_result(struct mode_s_detect_result *res) {
 	res->delta_test_result = 0;
 	res->good_message = 0;
 	res->mm.crcok = 0;
+	res->msgtype = 0;
+	res->msglen = 0;
 }
 
 // Detect a Mode S messages inside the magnitude buffer pointed by 'mag' and of
@@ -788,9 +794,44 @@ void mode_s_detect(mode_s_t *self, uint16_t *mag, uint32_t maglen, mode_s_callba
 		init_detect_result(&res);
 		
 		mode_s_detect_oneoffset(self, &res, mag, maglen, j);
+
 		if (res.demod_error_count == 0 && (self->check_crc == 0 || res.mm.crcok)) {
 			cb(self, &res.mm);
 			j += (MODE_S_PREAMBLE_US+(res.msglen*8))*2;
 		}
+	}
+}
+
+void empty_cb(mode_s_t *self, struct mode_s_msg *mm) { /* do nothing */ }
+
+void mode_s_detectfirst(mode_s_t state, struct mode_s_detect_result *res, unsigned char *data, int data_len) {
+	uint32_t data_len32 = (uint32_t) data_len;
+	uint32_t maglen = data_len32 / 2;
+	uint16_t mag[data_len32 / 2];
+
+	// compute the magnitude of the signal
+	//mode_s_compute_magnitude_vector(&data, &mag, data_len);
+	mode_s_compute_magnitude_vector(data, &mag, data_len32);
+
+	// detect Mode S messages in the signal
+	//struct mode_s_detect_result res;
+	uint32_t j;
+	
+	if (maglen < MODE_S_FULL_LEN*2) {
+		res->processing_error = 1;
+		return;
+	}
+
+	for (j = 0; j < maglen - MODE_S_FULL_LEN*2; j++) {
+		//printf("still fine: %u, %u, %u\n", j, maglen, maglen - MODE_S_FULL_LEN*2);
+		//init_detect_result(&res);
+		init_detect_result(res);
+		
+		mode_s_detect_oneoffset(&state, res, &mag, maglen, j);
+		//printf("%d: %d\n", j, res->preamble_found);
+		//if (res->demod_error_count == 0 && (state.check_crc == 0 || res->mm.crcok)) {
+		//	j += (MODE_S_PREAMBLE_US+(res->msglen*8))*2;
+		//}
+		if (res->preamble_found) return;
 	}
 }

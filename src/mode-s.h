@@ -69,7 +69,14 @@ struct mode_s_msg {
   int altitude, unit;
 };
 
+typedef struct test_struct {
+	int cat;
+} test_struct_t;
+
 struct mode_s_detect_result {
+  int processing_error;
+  int offset;
+	
   int preamble_found;
   int phase_corrected;
   int demod_error_count;
@@ -87,5 +94,7 @@ void mode_s_compute_magnitude_vector(unsigned char *data, uint16_t *mag, uint32_
 void mode_s_detect(mode_s_t *self, uint16_t *mag, uint32_t maglen, mode_s_callback_t);
 void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg);
 void mode_s_detect_oneoffset(mode_s_t *self, struct mode_s_detect_result *result, uint16_t *mag, uint32_t maglen, uint32_t j);
+
+void mode_s_detectfirst(mode_s_t state, struct mode_s_detect_result *result, unsigned char *data, int data_len);
 
 #endif
