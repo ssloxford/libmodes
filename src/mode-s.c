@@ -772,6 +772,7 @@ void mode_s_detect_oneoffset(mode_s_t *self, struct mode_s_detect_result *result
 }
 
 void init_detect_result(struct mode_s_detect_result *res) {
+	res->processing_error = 0;
 	res->preamble_found = 0;
 	res->phase_corrected = 0;
 	res->demod_error_count = 0;
@@ -835,3 +836,5 @@ void mode_s_detectfirst(mode_s_t state, struct mode_s_detect_result *res, unsign
 		if (res->preamble_found) return;
 	}
 }
+
+unsigned char* get_mm_msg(unsigned char *msg) { return msg; }		//no checks for validity

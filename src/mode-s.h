@@ -96,5 +96,6 @@ void mode_s_decode(mode_s_t *self, struct mode_s_msg *mm, unsigned char *msg);
 void mode_s_detect_oneoffset(mode_s_t *self, struct mode_s_detect_result *result, uint16_t *mag, uint32_t maglen, uint32_t j);
 
 void mode_s_detectfirst(mode_s_t state, struct mode_s_detect_result *result, unsigned char *data, int data_len);
+unsigned char* get_mm_msg(unsigned char *msg);
 
 #endif
